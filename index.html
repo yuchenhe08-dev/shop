@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物品自主下单 & 官方矿物计价公示</title>
+    <style>
+        body { background: #2c2c2c; color: #fff; font-family: sans-serif; padding: 20px; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; box-sizing: border-box; }
+        .main-layout { display: flex; gap: 20px; width: 100%; max-width: 850px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+        .box { background: #1e1e1e; border: 2px solid #555; padding: 20px; border-radius: 5px; box-sizing: border-box; }
+        .shop-panel { width: 100%; max-width: 400px; flex: 1 1 380px; }
+        .price-panel { width: 100%; max-width: 400px; flex: 1 1 380px; border-color: #55ffff; }
+        .price-list { list-style: none; padding: 0; margin: 0; }
+        .price-item { display: flex; justify-content: space-between; padding: 6px 5px; border-bottom: 1px dashed #444; font-size: 13px; }
+        .price-item:hover { background: #2a2a2a; }
+        .price-tag { color: #55ff55; font-weight: bold; }
+        label { display: block; margin-bottom: 5px; color: #aaa; font-size: 14px; }
+        input { width: 100%; padding: 10px; margin-bottom: 15px; background: #3c3c3c; border: 1px solid #555; color: #fff; box-sizing: border-box; border-radius: 4px; }
+        button { width: 100%; padding: 12px; background: #55ff55; color: #000; font-weight: bold; font-size: 16px; border: none; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #33cc33; }
+        .result-box { display: none; background: #2a2a2a; border: 2px dashed #55ff55; padding: 15px; margin-top: 15px; border-radius: 4px; }
+        textarea { width: 100%; padding: 10px; background: #3c3c3c; border: 1px solid #555; color: #fff; box-sizing: border-box; border-radius: 4px; }
+        .total-box { background: #2a3a2a; border: 1px solid #55ff55; padding: 10px; border-radius: 4px; color: #55ff55; font-weight: bold; font-size: 15px; text-align: center; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="main-layout">
+    <!-- 📜 左栏：矿物本位专属价格公示表 -->
+    <div class="box price-panel">
+        <h3 style="text-align: center; color: #55ffff; margin-top: 0; margin-bottom: 15px;">📜 官方全物品价格公示</h3>
+        <ul class="price-list" id="priceListContainer">
+            <!-- 动态渲染，确保每种商品的付款矿物独立锁定 -->
+        </ul>
+    </div>
+
+    <!-- ⛏️ 右栏：玩家自主下单区域 -->
+    <div class="box shop-panel">
+        <h3 style="text-align: center; color: #55ff55; margin-top: 0;">⛏️ 玩家简易下单</h3>
+        <form id="orderForm">
+            <label>游戏 ID</label>
+            <input type="text" id="username" placeholder="请输入你的精确游戏ID" required>
+            
+            <label>想要购买的物品编号 (只填左侧对应的数字)</label>
+            <input type="number" id="itemNo" placeholder="例如输入: 1" min="1" max="16" oninput="calcTotal()" required>
+            
+            <label>购买数量 (组数 或 个数)</label>
+            <input type="number" id="qty" value="1" min="1" oninput="calcTotal()" required>
+
+            <!-- 自动生成的总价显示区域 -->
+            <div class="total-box" id="totalBox">预计总价：请先输入正确的物品编号</div>
+            
+            <label>收货坐标</label>
+            <input type="text" id="coords" placeholder="例如: x:100, z:-200" required>
+            
+            <button type="submit">生成订单码</button>
+        </form>
+
+        <div id="resBox" class="result-box">
+            <p style="color:#55ff55; margin:0 0 8px 0; font-size:13px; font-weight: bold;">👇 订单已生成！请全选复制发给店长：</p>
+            <textarea id="resCode" rows="4" readonly onclick="this.select(); document.execCommand('copy'); alert('已自动全选并复制！');"></textarea>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 🛠️ 核心硬核数据库：每种商品绑定的“货币”都是你要求的游戏专属矿物块
+    var baseDatabase = {
+        1:  { name: "🪨 铁锭 (一组/64个)", price: 2, cur: "钻石" },
+        2:  { name: "🪙 铁块 (一组/64个)", price: 18, cur: "钻石" },
+        3:  { name: "✨ 金锭 (一组/64个)", price: 4, cur: "钻石" },
+        4:  { name: "👑 金块 (一组/64个)", price: 36, cur: "钻石" },
+        5:  { name: "💎 钻石 (一组/64个)", price: 10, cur: "铁块" },
+        6:  { name: "🔷 钻石块 (一组/64个)", price: 90, cur: "铁块" },
+        7:  { name: "🐉 下界合金锭 (单个)", price: 5, cur: "钻石块" },
+        8:  { name: "🔥 下界合金块 (单个)", price: 45, cur: "钻石块" },
+        9:  { name: "🛡️ 下界合金装备套装 (全套)", price: 80, cur: "下界合金锭" },
+        10: { name: "🪖 下界合金头盔", price: 20, cur: "下界合金锭" },
+        11: { name: "👕 下界合金胸甲", price: 25, cur: "下界合金锭" },
+        12: { name: "👖 下界合金腿甲", price: 22, cur: "下界合金锭" },
+        13: { name: "🥾 下界合金靴子", price: 18, cur: "下界合金锭" },
+        14: { name: "⚔️ 下界合金剑", price: 15, cur: "钻石块" },
+        15: { name: "⛏️ 下界合金镐", price: 15, cur: "钻石块" },
+        16: { name: "🪓 下界合金斧", price: 15, cur: "钻石块" }
+    };
+
+    // 页面加载完毕后动态生成左侧的价格单
+    document.addEventListener("DOMContentLoaded", function() {
+        var html = '';
+        for (var key in baseDatabase) {
+            var item = baseDatabase[key];
+            var styleStr = (key == 1 || key == 5 || key == 7 || key == 9 || key == 14) ? 'style="color:#ffaa00; font-weight:bold;"' : '';
+            html += '<li class="price-item" ' + styleStr + '><span>【' + key + '】' + item.name + '</span><span class="price-tag">' + item.price + ' ' + item.cur + '</span></li>';
+        }
+        document.getElementById('priceListContainer').innerHTML = html;
+    });
+
+    function calcTotal() {
+        var no = parseInt(document.getElementById('itemNo').value);
+        var q = parseInt(document.getElementById('qty').value) || 0;
+        var item = baseDatabase[no];
+        
+        if (item) {
+            document.getElementById('totalBox').innerText = "预计总价：" + (item.price * q) + " " + item.cur + " (" + item.name + ")";
+        } else {
+            document.getElementById('totalBox').innerText = "预计总价：请输入正确的物品编号(1-16)";
+        }
+    }
+
+    function makeSign(str) {
+        var buffer = new TextEncoder("utf-8").encode(str);
+        return crypto.subtle.digest("SHA-256", buffer).then(function(hash) { return Array.from(new Uint8Array(hash)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(''); });
+    }
+
+    document.getElementById('orderForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        var u = document.getElementById('username').value;
+        var no = parseInt(document.getElementById('itemNo').value);
+        var q = document.getElementById('qty').value;
+        var c = document.getElementById('coords').value;
+        var salt = Date.now().toString(); 
+        var t = new Date().toLocaleString();
+        
+        var item = baseDatabase[no];
+        if (!item) return alert("请输入正确的物品编号！");
+        
+        var total = (item.price * parseInt(q)).toString();
+        
+        // 核心亮点：把商品对应的“矿物货币单位 (item.cur)”一起塞进不可破解的 SHA-256 加密中
+        var d = { u: u, g: item.name, cur: item.cur, p: item.price.toString(), q: q, total: total, c: c, t: t, sfl: salt };
+        var rawMix = u + salt + item.name + total + item.cur + c;
+
+        makeSign(rawMix).then(function(localSign) {
+            d.s = localSign; 
+            var code = "MC_" + btoa(encodeURIComponent(JSON.stringify(d)));
+            document.getElementById('resBox').style.display = 'block';
+            document.getElementById('resCode').value = code;
+        });
+    });
+</script>
+
+</body>
+</html>
